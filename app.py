@@ -11,7 +11,7 @@ plt.rcParams["font.family"] = ["Microsoft YaHei", "SimHei", "Arial Unicode MS"]
 plt.rcParams["axes.unicode_minus"] = False
 
 # --------------------------
-# 1. 核心PSO算法（终极简化版，无生成器坑）
+# 1. 核心PSO算法（纯同步版，无线程/生成器）
 # --------------------------
 def pso_optimize(objective_func, dim=2, bounds=None, num_particles=200, max_iter=1000,
                  w_start=0.9, w_end=0.4, c1=2.05, c2=2.05,
@@ -47,12 +47,8 @@ def pso_optimize(objective_func, dim=2, bounds=None, num_particles=200, max_iter
     prev_best_value = gbest_value
     max_velocity = np.array([(high - low)*0.2 for (low, high) in bounds])
 
-    # 迭代优化（无生成器，直接返回所有结果）
+    # 迭代优化（纯同步，无进度反馈，避免云端兼容问题）
     for i in range(max_iter):
-        # 动态更新进度（给前端反馈）
-        if i % 50 == 0:
-            st.session_state['pso_progress'] = (i / max_iter, gbest_value, gbest_position)
-        
         w = w_start - (w_start - w_end) * (i / max_iter)
         current_positions = []
 
@@ -115,7 +111,7 @@ def pso_optimize(objective_func, dim=2, bounds=None, num_particles=200, max_iter
         gbest_history.append(gbest_value)
         gbest_position_history.append(gbest_position.copy())
 
-    # 最终返回所有结果（无索引坑）
+    # 最终返回所有结果
     return {
         'gbest_position': gbest_position,
         'gbest_value': gbest_value,
@@ -136,7 +132,7 @@ def create_3d_animation(objective_func, bounds, particle_history, gbest_position
     y = np.linspace(y_min, y_max, 50)
     X, Y = np.meshgrid(x, y)
     
-    # 计算Z值（逐点计算，避免批量错误）
+    # 计算Z值
     Z = np.zeros_like(X)
     for i in range(X.shape[0]):
         for j in range(X.shape[1]):
@@ -163,23 +159,20 @@ def create_3d_animation(objective_func, bounds, particle_history, gbest_position
 
     # 更新函数
     def update(frame):
-        frame = min(frame, len(particle_history)-1)  # 防止索引越界
+        frame = min(frame, len(particle_history)-1)
         positions = particle_history[frame]
         x_coords = positions[:, 0]
         y_coords = positions[:, 1]
         z_coords = np.array([objective_func([x, y]) for x, y in zip(x_coords, y_coords)])
         
-        # 更新粒子位置
         particles_scatter._offsets3d = (x_coords, y_coords, z_coords)
         
-        # 更新全局最优位置
         gbest_pos = gbest_position_history[frame]
         gbest_z = objective_func(gbest_pos)
         gbest_scatter._offsets3d = ([gbest_pos[0]], [gbest_pos[1]], [gbest_z])
         
         return particles_scatter, gbest_scatter
 
-    # 创建动画
     ani = FuncAnimation(fig, update, frames=len(particle_history), 
                         interval=interval, blit=False, repeat=False)
     return ani
@@ -217,7 +210,7 @@ def create_2d_animation(objective_func, bounds, particle_history, gbest_position
     ax.set_title('PSO算法2D粒子运动过程', fontsize=14)
     ax.legend()
 
-    # 更新函数（防止索引越界）
+    # 更新函数
     def update(frame):
         frame = min(frame, len(particle_history)-1)
         positions = particle_history[frame]
@@ -249,13 +242,9 @@ def plot_convergence_curve(history):
     return fig
 
 # --------------------------
-# 3. Streamlit网页界面（终极版）
+# 3. Streamlit网页界面（纯同步版）
 # --------------------------
 def main():
-    # 初始化会话状态（进度跟踪）
-    if 'pso_progress' not in st.session_state:
-        st.session_state['pso_progress'] = (0.0, 0.0, np.array([0.0, 0.0]))
-    
     # 页面配置
     st.set_page_config(
         page_title="PSO 3D可视化优化器",
@@ -269,6 +258,8 @@ def main():
     .main-title { font-size: 2.5rem; color: #2c3e50; font-weight: bold; margin-bottom: 1rem; }
     .sub-title { font-size: 1.2rem; color: #7f8c8d; margin-bottom: 2rem; }
     .result-card { background-color: #f8f9fa; padding: 1.5rem; border-radius: 10px; margin: 1rem 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .stButton>button { background-color: #e74c3c; color: white; font-size: 1.1rem; border-radius: 8px; height: 3rem; }
+    .stButton>button:hover { background-color: #c0392b; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -279,7 +270,7 @@ def main():
     with st.sidebar:
         st.header("⚙️ 算法参数配置")
         
-        # 1. 函数输入（纯数学表达式，无需任何前缀）
+        # 1. 函数输入
         st.subheader("🎯 目标函数")
         func_input = st.text_input(
             "输入二元函数 f(x,y)",
@@ -312,13 +303,13 @@ def main():
         show_3d = st.checkbox("显示3D动画", value=True)
         show_2d = st.checkbox("显示2D等高线动画", value=True)
 
-    # 主页面计算按钮
-    if st.button("🚀 启动PSO优化算法", type="primary", use_container_width=True):
+    # 主页面计算按钮（纯同步，无线程）
+    if st.button("🚀 启动PSO优化算法", use_container_width=True):
         try:
-            # 1. 构建目标函数（自动适配numpy，无需用户加前缀）
+            # 1. 构建目标函数
             def objective_function(params):
                 x, y = params[0], params[1]
-                # 安全替换：把数学函数转成numpy函数
+                # 安全替换数学函数
                 func_str = func_input.replace("sqrt", "np.sqrt")
                 func_str = func_str.replace("abs", "np.abs")
                 func_str = func_str.replace("sin", "np.sin")
@@ -326,24 +317,15 @@ def main():
                 func_str = func_str.replace("tan", "np.tan")
                 func_str = func_str.replace("exp", "np.exp")
                 func_str = func_str.replace("log", "np.log")
-                # 执行计算（异常捕获）
                 try:
                     return float(eval(func_str))
                 except:
-                    return float('inf')  # 出错时返回无穷大
+                    return float('inf')
             
-            st.success("✅ 函数解析成功，开始优化...")
-            
-            # 2. 进度显示
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            # 3. 运行PSO算法（新开线程避免卡顿）
-            import threading
-            result_container = []
-            
-            def run_pso():
-                res = pso_optimize(
+            # 2. 显示加载状态
+            with st.spinner("✅ 函数解析成功，正在优化中...（请稍等，约1-2分钟）"):
+                # 3. 运行PSO算法（纯同步）
+                pso_result = pso_optimize(
                     objective_function,
                     dim=2,
                     bounds=bounds,
@@ -353,27 +335,8 @@ def main():
                     c2=c2,
                     perturbation_rate=perturbation_rate
                 )
-                result_container.append(res)
             
-            # 启动PSO线程
-            pso_thread = threading.Thread(target=run_pso)
-            pso_thread.start()
-            
-            # 实时更新进度
-            while pso_thread.is_alive():
-                progress, current_val, current_pos = st.session_state['pso_progress']
-                progress_bar.progress(min(progress, 1.0))
-                status_text.text(f"🔄 迭代中 | 当前最优值：{current_val:.8f} | 最优位置：[{current_pos[0]:.4f}, {current_pos[1]:.4f}]")
-            
-            # 等待线程结束，获取结果
-            pso_thread.join()
-            pso_result = result_container[0]
-            
-            # 4. 隐藏进度条，显示结果
-            progress_bar.empty()
-            status_text.empty()
-            
-            # 5. 显示优化结果
+            # 4. 显示优化结果
             st.markdown('<div class="result-card">', unsafe_allow_html=True)
             st.subheader("🏆 优化结果")
             col1, col2, col3 = st.columns(3)
@@ -385,12 +348,12 @@ def main():
                 st.metric("函数最小值", f"{pso_result['gbest_value']:.8f}")
             st.markdown('</div>', unsafe_allow_html=True)
             
-            # 6. 显示收敛曲线
+            # 5. 显示收敛曲线
             st.subheader("📈 收敛曲线")
             conv_fig = plot_convergence_curve(pso_result['gbest_history'])
             st.pyplot(conv_fig)
             
-            # 7. 生成并显示动画
+            # 6. 生成并显示动画
             st.subheader("🎬 动态可视化结果")
             
             # 3D动画
@@ -431,7 +394,7 @@ def main():
                         use_container_width=True
                     )
             
-            # 8. 结果导出
+            # 7. 结果导出
             st.subheader("💾 结果导出")
             result_text = f"""
             PSO优化结果
